@@ -20,13 +20,12 @@ export const CreateBlog = () => {
     title: "",
     content: "",
     excerpt: "",
-    published: false
   });
-  const [applyForVerification, setApplyForVerification] = useState(false);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [actionType, setActionType] = useState<"draft" | "verification">("draft");
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -43,9 +42,14 @@ export const CreateBlog = () => {
     }));
   };
 
-  const handleSubmit = async (e: React.FormEvent, shouldPublish = false) => {
+  const handleSubmit = async (e: React.FormEvent, verificationRequested = false) => {
     e.preventDefault();
     if (!user) return;
+    
+    if (!formData.title || !formData.content) {
+      setError("Title and Content are required.");
+      return;
+    }
 
     setLoading(true);
     setError("");
@@ -66,6 +70,27 @@ export const CreateBlog = () => {
         background_image_url = publicUrlData.publicUrl;
       }
 
+      // Ensure profile exists before creating the blog
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (!profileData) {
+        const baseUsername = user.user_metadata?.username || user.email?.split('@')[0] || 'user';
+        const randomSuffix = Math.floor(Math.random() * 10000).toString();
+        const { error: profileError } = await supabase.from('profiles').insert({
+          user_id: user.id,
+          username: `${baseUsername}_${randomSuffix}`,
+          display_name: user.user_metadata?.display_name || baseUsername,
+        });
+        if (profileError) {
+          console.error("Failed to create missing profile:", profileError);
+          throw new Error("Could not ensure user profile exists: " + profileError.message);
+        }
+      }
+
       const { data, error: insertError } = await supabase
         .from('blogs')
         .insert({
@@ -73,8 +98,8 @@ export const CreateBlog = () => {
           content: formData.content,
           excerpt: formData.excerpt || formData.content.substring(0, 200),
           author_id: user.id,
-          published: shouldPublish || formData.published,
-          verification_requested: applyForVerification ? true : false,
+          published: false,
+          verification_requested: verificationRequested,
           background_image_url
         })
         .select()
@@ -83,12 +108,10 @@ export const CreateBlog = () => {
       if (insertError) throw insertError;
 
       toast({
-        title: shouldPublish ? "Blog published!" : "Draft saved!",
-        description: applyForVerification && (shouldPublish || formData.published)
-          ? "Your post is published and sent for admin verification."
-          : shouldPublish
-            ? "Your blog post has been published successfully."
-            : "Your blog post has been saved as a draft.",
+        title: verificationRequested ? "Sent for verification!" : "Draft saved!",
+        description: verificationRequested 
+          ? "Your post has been saved and sent for admin verification."
+          : "Your blog post has been saved as a draft.",
       });
 
       navigate("/dashboard");
@@ -212,52 +235,32 @@ export const CreateBlog = () => {
                   />
                 </div>
 
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="published"
-                    checked={formData.published}
-                    onCheckedChange={(checked) => 
-                      setFormData(prev => ({ ...prev, published: checked as boolean }))
-                    }
-                  />
-                  <Label htmlFor="published" className="text-sm">
-                    Publish immediately
-                  </Label>
-                </div>
-
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="verification_requested"
-                    checked={applyForVerification}
-                    onCheckedChange={(checked) => setApplyForVerification(!!checked)}
-                  />
-                  <Label htmlFor="verification_requested" className="text-sm">
-                    Apply for Verification
-                  </Label>
-                  {applyForVerification && (
-                    <Badge variant="secondary">Sent to admin after publish</Badge>
-                  )}
-                </div>
-
                 <div className="flex gap-4 pt-4">
                   <Button
-                    type="submit"
+                    type="button"
                     variant="outline"
                     disabled={loading}
                     className="flex items-center gap-2"
+                    onClick={(e) => {
+                      setActionType("draft");
+                      handleSubmit(e, false);
+                    }}
                   >
                     <Save className="w-4 h-4" />
-                    {loading ? "Saving..." : "Save as Draft"}
+                    {loading && actionType === "draft" ? "Saving..." : "Save Draft"}
                   </Button>
                   
                   <Button
                     type="button"
-                    onClick={(e) => handleSubmit(e, true)}
                     disabled={loading}
                     className="bg-gradient-primary hover:shadow-elegant transition-all duration-300 flex items-center gap-2"
+                    onClick={(e) => {
+                      setActionType("verification");
+                      handleSubmit(e, true);
+                    }}
                   >
                     <Eye className="w-4 h-4" />
-                    {loading ? "Publishing..." : "Publish Post"}
+                    {loading && actionType === "verification" ? "Applying..." : "Apply for Verification"}
                   </Button>
                 </div>
               </CardContent>

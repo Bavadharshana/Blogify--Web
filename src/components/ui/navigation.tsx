@@ -15,12 +15,33 @@ export const Navigation = () => {
   useEffect(() => {
     const fetchRole = async () => {
       if (!user) { setIsAdmin(false); return; }
-      const { data } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('user_id', user.id)
-        .single();
-      setIsAdmin((data as any)?.role === 'admin');
+      
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        if (!data && !error) {
+          // Profile is missing, try to create it to prevent FK constraint errors
+          const baseUsername = user.user_metadata?.username || user.email?.split('@')[0] || 'user';
+          const randomSuffix = Math.floor(Math.random() * 10000).toString();
+          const username = `${baseUsername}_${randomSuffix}`;
+          
+          await supabase.from('profiles').insert({
+            user_id: user.id,
+            username: username,
+            display_name: user.user_metadata?.display_name || baseUsername,
+          });
+          setIsAdmin(false);
+        } else {
+          setIsAdmin((data as any)?.role === 'admin');
+        }
+      } catch (err) {
+        console.error("Error fetching role:", err);
+        setIsAdmin(false);
+      }
     };
     fetchRole();
   }, [user]);
